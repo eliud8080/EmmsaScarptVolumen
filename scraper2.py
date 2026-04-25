@@ -1,118 +1,135 @@
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import os
-from datetime import timedelta
+
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service
-# CONFIG SELENIUM (compatible con GitHub Actions Ubuntu)
-def get_driver():
-    chrome_options = Options()
-    chrome_options.page_load_strategy = 'eager'
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-infobars")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
 
-    service = Service("/usr/lib/chromium-browser/chromedriver")
-    return webdriver.Chrome(service=service,options=chrome_options)
-    
-# FUNCIONES COMUNES
-def escribir_fecha(input_element, fecha_string):
+
+# =========================
+# CONFIG
+# =========================
+CARPETA = "datos"
+os.makedirs(CARPETA, exist_ok=True)
+
+ARCHIVO = os.path.join(CARPETA, "volumen_emmsa.csv")
+
+
+# =========================
+# DRIVER (AUTO-DETECT)
+# =========================
+def get_driver():
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+
+    # 🔥 clave: sin ruta fija
+    return webdriver.Chrome(options=options)
+
+
+# =========================
+# UTILIDADES
+# =========================
+def escribir_fecha(input_element, fecha):
     input_element.click()
     input_element.send_keys(Keys.CONTROL, "a")
     input_element.send_keys(Keys.BACKSPACE)
-    input_element.send_keys(fecha_string)
-    time.sleep(0.1)
+    input_element.send_keys(fecha)
+    time.sleep(0.2)
+
 
 def cargar_iframe(driver):
-    # Espera a que aparezca al menos 1 iframe
-    WebDriverWait(driver, 30).until(
-        EC.presence_of_element_located((By.TAG_NAME, "iframe"))
-    )
-
-    # Cambia al iframe que realmente contiene la app
     WebDriverWait(driver, 30).until(
         EC.frame_to_be_available_and_switch_to_it(
             (By.XPATH, "//iframe[contains(@src,'emmsa')]")
         )
     )
-    
-# SCRAPING VOLUMENES DIARIOS
-def scraper_volumenes(driver, fecha_hoy):
 
-    print("🔎 Scraping VOLUMENES...")
 
-    url = "https://www.emmsa.com.pe/index.php/precios-diarios/"
-    driver.get(url)
+# =========================
+# SCRAPER
+# =========================
+def scraper_volumenes(driver, fecha):
+
+    print(f"🔎 Scraping {fecha}")
+
+    driver.get("https://www.emmsa.com.pe/index.php/precios-diarios/")
 
     cargar_iframe(driver)
-    
+
     fecha_input = WebDriverWait(driver, 30).until(
-    EC.element_to_be_clickable((By.ID, "txtfecha1"))
+        EC.element_to_be_clickable((By.ID, "txtfecha1"))
     )
-    escribir_fecha(fecha_input, fecha_hoy)
-    
-    # 👇 Cerrar el datepicker antes del click
+
+    escribir_fecha(fecha_input, fecha)
     fecha_input.send_keys(Keys.ESCAPE)
-    time.sleep(0.5)
-    
-    driver.find_element(By.XPATH, "/html/body/div[1]/div[2]/div[2]/table/tbody/tr[2]/td/table/tbody/tr/td[2]/input").click()
+
+    # activar checkbox
     try:
         WebDriverWait(driver, 5).until(
-        EC.element_to_be_clickable((By.ID, "chkChanging"))
+            EC.element_to_be_clickable((By.ID, "chkChanging"))
         ).click()
     except:
         pass
-    boton = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Consultar')]"))
-    )
-    boton.click()
 
-    time.sleep(1)
+    # botón consultar
+    WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Consultar')]"))
+    ).click()
+
+    time.sleep(2)
 
     driver.switch_to.default_content()
     cargar_iframe(driver)
 
-    # Leer tabla volumenes
+    # =========================
+    # TABLA
+    # =========================
     try:
-        tbody = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".dataTables_scrollBody tbody"))
+        tbody = WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, ".dataTables_scrollBody tbody")
+            )
         )
     except:
-        print("⚠ No hay tabla de volúmenes")
+        print("⚠ No hay tabla")
         return None
 
-    thead = driver.find_element(By.CSS_SELECTOR, ".dataTables_scrollHead thead")
-    headers = [th.text.strip() for th in thead.find_elements(By.TAG_NAME, "th")]
+    headers = [
+        th.text.strip()
+        for th in driver.find_elements(By.CSS_SELECTOR, ".dataTables_scrollHead th")
+    ]
 
-    filas = tbody.find_elements(By.TAG_NAME, ".//tr[td]")
+    filas = tbody.find_elements(By.XPATH, ".//tr[td]")
+
     datos = []
-
     for fila in filas:
         celdas = [td.text.strip() for td in fila.find_elements(By.TAG_NAME, "td")]
         if len(celdas) == len(headers):
             datos.append(celdas)
 
     if not datos:
+        print("⚠ tabla vacía")
         return None
 
     df = pd.DataFrame(datos, columns=headers)
-    df["Fecha"] = fecha_hoy
+    df["Fecha"] = fecha
+
+    print(f"✅ filas: {len(df)}")
 
     return df
 
-# GENERAR FECHAS
 
-def fechas_ayer_y_hoyV():
+# =========================
+# FECHAS
+# =========================
+def fechas_ayer_hoy():
     hoy = datetime.now()
     ayer = hoy - timedelta(days=1)
 
@@ -121,44 +138,55 @@ def fechas_ayer_y_hoyV():
         hoy.strftime("%d/%m/%Y")
     ]
 
-# PROGRAMA PRINCIPAL
-def main():
-    csv_volumenes = "ArchBIV/volumen_historico_emmsa.csv"
 
-    # Fechas ya guardadas
-    fechas_existentes = set()
-    if os.path.exists(csv_volumenes):
-        df_v = pd.read_csv(csv_volumenes)
-        if "Fecha" in df_v.columns:
-            fechas_existentes = set(df_v["Fecha"].astype(str))
+# =========================
+# MAIN
+# =========================
+def main():
+
+    print("📡 EMMSA SCRAPER VOLUMEN")
+
+    # historial
+    if os.path.exists(ARCHIVO):
+        df_old = pd.read_csv(ARCHIVO)
     else:
-        df_v = pd.DataFrame()
+        df_old = pd.DataFrame()
 
     driver = get_driver()
-    nuevos_datos = []
 
-    for fecha in fechas_ayer_y_hoyV():
-        print(f"📅 Procesando {fecha}")
+    nuevos = []
 
-        if fecha in fechas_existentes:
-            print(f"✔ {fecha} ya existe, se omite")
+    for fecha in fechas_ayer_hoy():
+
+        if not df_old.empty and fecha in df_old["Fecha"].astype(str).values:
+            print(f"✔ {fecha} ya existe")
             continue
 
-        df_vol_new = scraper_volumenes(driver, fecha)
-        if df_vol_new is not None:
-            nuevos_datos.append(df_vol_new)
+        df = scraper_volumenes(driver, fecha)
+
+        if df is not None:
+            nuevos.append(df)
 
     driver.quit()
 
-    if nuevos_datos:
-        df_final = pd.concat([df_v] + nuevos_datos, ignore_index=True)
-        df_final.drop_duplicates().to_csv(csv_volumenes, index=False, encoding="utf-8-sig")
-        print("💾 CSV volúmenes actualizado")
-    else:
-        print("ℹ No hubo nuevos datos")
+    # =========================
+    # GUARDAR
+    # =========================
+    if nuevos:
 
+        df_final = pd.concat([df_old] + nuevos, ignore_index=True)
+
+        df_final = df_final.drop_duplicates()
+
+        df_final.to_csv(ARCHIVO, index=False, encoding="utf-8-sig")
+
+        print("\n💾 Guardado OK")
+        print(f"📁 {ARCHIVO}")
+        print(df_final.tail())
+
+    else:
+        print("ℹ No hay nuevos datos")
 
 
 if __name__ == "__main__":
     main()
-
