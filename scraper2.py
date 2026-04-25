@@ -1,15 +1,19 @@
-import pandas as pd
-from datetime import datetime, timedelta
-import time
-import os
-
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.service import Service
 
+def get_driver():
+    options = Options()
+    options.binary_location = "/usr/bin/chromium-browser"  # 🔥 CLAVE
+
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+
+    service = Service("/usr/bin/chromedriver")  # 🔥 CLAVE
+
+    return webdriver.Chrome(service=service, options=options)
 
 # =========================
 # CONFIG
@@ -18,20 +22,6 @@ CARPETA = "datos"
 os.makedirs(CARPETA, exist_ok=True)
 
 ARCHIVO = os.path.join(CARPETA, "volumen_emmsa.csv")
-
-
-# =========================
-# DRIVER (AUTO-DETECT)
-# =========================
-def get_driver():
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-
-    # 🔥 clave: sin ruta fija
-    return webdriver.Chrome(options=options)
-
 
 # =========================
 # UTILIDADES
